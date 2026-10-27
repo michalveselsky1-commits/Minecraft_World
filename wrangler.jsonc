@@ -1,7 +1,7 @@
 {
   "name": "minecraft-world",
   "compatibility_date": "2026-10-27",
-  // Trigger a fresh GitHub-connected Cloudflare build after build-token rotation.
+  // Trigger a fresh GitHub-connected Cloudflare build after token and secret rotation.
   "assets": {
     "directory": "./public",
     "binding": "ASSETS"
