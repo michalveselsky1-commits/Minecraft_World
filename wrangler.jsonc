@@ -3,5 +3,12 @@
   "compatibility_date": "2026-10-27",
   "assets": {
     "directory": "./public"
-  }
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "minecraft-world-db",
+      "database_id": "3b10091e-efc0-4e8c-9195-8514a7b0aded"
+    }
+  ]
 }
