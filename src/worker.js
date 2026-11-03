@@ -30,6 +30,27 @@ if(request.method!=="POST")return json({error:"Nepodporovaná metoda"},405);
 if(Number(request.headers.get("content-length")||0)>8192)return json({error:"Příliš velký požadavek"},413);
 let body;try{body=await request.json()}catch{return json({error:"Neplatný JSON"},400)}
 if(url.pathname==="/api/admin/verify")return json({ok:await pinOK(request,env,body.pin)});
+if(url.pathname==="/api/admin/deploy"){
+if(!await pinOK(request,env,body.pin))return json({error:"Přístup pouze pro správce. Odemkni správu platným PINem."},403);
+if(!env.CLOUDFLARE_BUILD_TOKEN)return json({error:"Chybí CLOUDFLARE_BUILD_TOKEN v Runtime Secrets tohoto Workeru."},503);
+const account="02d3eed9f53a8cd69f94bc83f1698b71",base="https://api.cloudflare.com/client/v4/accounts/"+account;
+async function cf(path){
+const response=await fetch(base+path,{headers:{Authorization:"Bearer "+env.CLOUDFLARE_BUILD_TOKEN,Accept:"application/json"}});
+const data=await response.json().catch(()=>({success:false,errors:[{message:"Neplatná odpověď Cloudflare"}]}));
+if(!response.ok||data.success===false)throw Error("Cloudflare API: "+(data.errors||[]).map(e=>e.message).join("; ").slice(0,220));
+return data.result;
+}
+try{
+const scripts=await cf("/workers/scripts"),list=Array.isArray(scripts)?scripts:(scripts?.scripts||[]);
+const script=list.find(x=>x.id==="minecraft-world");
+if(!script?.tag)return json({error:"Worker minecraft-world nebyl nalezen. Ověř oprávnění tokenu."},502);
+const result=await cf("/builds/workers/"+encodeURIComponent(script.tag)+"/builds?per_page=1");
+const builds=Array.isArray(result)?result:(result?.builds||[]);
+const b=builds[0];
+return json({checked_at:new Date().toISOString(),build:b?{status:b.status||null,outcome:b.build_outcome||null,created_at:b.created_on||null,completed_at:b.completed_on||null,branch:b.build_trigger_metadata?.branch||null,commit:b.build_trigger_metadata?.commit_hash||null,message:b.build_trigger_metadata?.commit_message||null}:null});
+}catch(e){return json({error:e.message},502)}
+}
+
 if(url.pathname==="/api/quests/add"){
 const name=String(body.name||"").trim().slice(0,120),player=body.player;
 if(!name||!["10miki10","Ala","Adas","Všichni"].includes(player))return json({error:"Neplatný úkol"},400);
