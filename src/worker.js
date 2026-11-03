@@ -3,6 +3,7 @@ const seed=[
 const json=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{"content-type":"application/json; charset=utf-8","cache-control":"no-store","x-content-type-options":"nosniff"}});
 async function setup(db){
 await db.prepare("CREATE TABLE IF NOT EXISTS quests (id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,player TEXT NOT NULL,reward INTEGER NOT NULL,currency TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'open',updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)").run();
+await db.prepare("CREATE TABLE IF NOT EXISTS admin_sessions (token_hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL)").run();
 await db.prepare("CREATE TABLE IF NOT EXISTS approval_attempts (ip TEXT PRIMARY KEY, failures INTEGER NOT NULL DEFAULT 0,blocked_until INTEGER NOT NULL DEFAULT 0)").run();
 const row=await db.prepare("SELECT COUNT(*) AS n FROM quests").first();
 if(!row.n){for(const t of seed)await db.prepare("INSERT INTO quests (name,player,reward,currency,status) VALUES (?,?,?,?,'open')").bind(...t).run()}
@@ -19,6 +20,8 @@ if(diff===0){await env.DB.prepare("DELETE FROM approval_attempts WHERE ip=?").bi
 const failures=(attempt?.failures||0)+1;
 await env.DB.prepare("INSERT INTO approval_attempts(ip,failures,blocked_until) VALUES(?,?,?) ON CONFLICT(ip) DO UPDATE SET failures=excluded.failures,blocked_until=excluded.blocked_until").bind(ip,failures,failures>=5?Date.now()+15*60*1000:0).run();return false;
 }
+async function tokenHash(token){const bytes=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(token));return [...new Uint8Array(bytes)].map(x=>x.toString(16).padStart(2,"0")).join("")}
+async function sessionOK(env,token){if(typeof token!=="string"||!/^[a-f0-9]{64}$/.test(token))return false;const row=await env.DB.prepare("SELECT expires_at FROM admin_sessions WHERE token_hash=?").bind(await tokenHash(token)).first();return !!row&&row.expires_at>Date.now()}
 export default {async fetch(request,env){
 const url=new URL(request.url);
 if(!url.pathname.startsWith("/api/"))return env.ASSETS.fetch(request);
@@ -29,9 +32,19 @@ if(url.pathname==="/api/quests"&&request.method==="GET"){const {results}=await e
 if(request.method!=="POST")return json({error:"Nepodporovaná metoda"},405);
 if(Number(request.headers.get("content-length")||0)>8192)return json({error:"Příliš velký požadavek"},413);
 let body;try{body=await request.json()}catch{return json({error:"Neplatný JSON"},400)}
-if(url.pathname==="/api/admin/verify")return json({ok:await pinOK(request,env,body.pin)});
+if(url.pathname==="/api/admin/verify"){
+if(!await pinOK(request,env,body.pin))return json({ok:false},403);
+const token=[...crypto.getRandomValues(new Uint8Array(32))].map(x=>x.toString(16).padStart(2,"0")).join("");
+const expires_at=Date.now()+2*60*60*1000;
+await env.DB.prepare("DELETE FROM admin_sessions WHERE expires_at<?").bind(Date.now()).run();
+await env.DB.prepare("INSERT INTO admin_sessions(token_hash,expires_at) VALUES(?,?)").bind(await tokenHash(token),expires_at).run();
+return json({ok:true,token,expires_at});
+}
+if(url.pathname==="/api/admin/session")return json({ok:await sessionOK(env,body.token)});
+if(url.pathname==="/api/admin/logout"){if(typeof body.token==="string")await env.DB.prepare("DELETE FROM admin_sessions WHERE token_hash=?").bind(await tokenHash(body.token)).run();return json({ok:true})}
+
 if(url.pathname==="/api/admin/deploy"){
-if(!await pinOK(request,env,body.pin))return json({error:"Přístup pouze pro správce. Odemkni správu platným PINem."},403);
+if(!await sessionOK(env,body.token))return json({error:"Přihlášení správce vypršelo. Přihlas se znovu."},403);
 if(!env.CLOUDFLARE_BUILD_TOKEN)return json({error:"Chybí CLOUDFLARE_BUILD_TOKEN v Runtime Secrets tohoto Workeru."},503);
 const account="02d3eed9f53a8cd69f94bc83f1698b71",base="https://api.cloudflare.com/client/v4/accounts/"+account;
 async function cf(path){
@@ -65,7 +78,7 @@ if(url.pathname==="/api/quests/retract"){
 const result=await env.DB.prepare("UPDATE quests SET status='open',updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'").bind(id).run();return json({ok:result.meta.changes>0},result.meta.changes?200:409);
 }
 if(url.pathname==="/api/quests/approve"||url.pathname==="/api/quests/reject"){
-if(!await pinOK(request,env,body.pin))return json({error:"Nesprávný PIN nebo dočasné omezení pokusů"},403);
+if(!await sessionOK(env,body.token))return json({error:"Přihlášení správce vypršelo"},403);
 const status=url.pathname.endsWith("approve")?"approved":"open";
 const result=await env.DB.prepare("UPDATE quests SET status=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'").bind(status,id).run();
 return json({ok:result.meta.changes>0},result.meta.changes?200:409);
