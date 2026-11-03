@@ -7,6 +7,7 @@ try{await db.prepare("ALTER TABLE quests ADD COLUMN description TEXT NOT NULL DE
 try{await db.prepare("ALTER TABLE quests ADD COLUMN guide TEXT NOT NULL DEFAULT ''").run()}catch(e){if(!String(e).includes("duplicate column"))throw e}
 await db.prepare("CREATE TABLE IF NOT EXISTS admin_sessions (token_hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL)").run();
 await db.prepare("CREATE TABLE IF NOT EXISTS approval_attempts (ip TEXT PRIMARY KEY, failures INTEGER NOT NULL DEFAULT 0,blocked_until INTEGER NOT NULL DEFAULT 0)").run();
+await db.prepare("UPDATE quests SET reward=0 WHERE player=? AND reward<>0").bind("Všichni").run();
 const row=await db.prepare("SELECT COUNT(*) AS n FROM quests").first();
 if(!row.n){for(const t of seed)await db.prepare("INSERT INTO quests (name,player,reward,currency,status) VALUES (?,?,?,?,'open')").bind(t[0],t[1],t[1]==="Všichni"?0:t[2],t[3]).run()}
 }
