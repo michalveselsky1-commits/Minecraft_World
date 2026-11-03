@@ -4,6 +4,7 @@ const json=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:
 async function setup(db){
 await db.prepare("CREATE TABLE IF NOT EXISTS quests (id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,player TEXT NOT NULL,reward INTEGER NOT NULL,currency TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'open',updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)").run();
 try{await db.prepare("ALTER TABLE quests ADD COLUMN description TEXT NOT NULL DEFAULT ''").run()}catch(e){if(!String(e).includes("duplicate column"))throw e}
+try{await db.prepare("ALTER TABLE quests ADD COLUMN guide TEXT NOT NULL DEFAULT ''").run()}catch(e){if(!String(e).includes("duplicate column"))throw e}
 await db.prepare("CREATE TABLE IF NOT EXISTS admin_sessions (token_hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL)").run();
 await db.prepare("CREATE TABLE IF NOT EXISTS approval_attempts (ip TEXT PRIMARY KEY, failures INTEGER NOT NULL DEFAULT 0,blocked_until INTEGER NOT NULL DEFAULT 0)").run();
 const row=await db.prepare("SELECT COUNT(*) AS n FROM quests").first();
@@ -29,7 +30,7 @@ if(!url.pathname.startsWith("/api/"))return env.ASSETS.fetch(request);
 if(!env.DB)return json({error:"Databáze není připojena"},503);
 try{
 await setup(env.DB);
-if(url.pathname==="/api/quests"&&request.method==="GET"){const {results}=await env.DB.prepare("SELECT id,name,description,player,reward,currency,status FROM quests ORDER BY id").all();return json({tasks:results})}
+if(url.pathname==="/api/quests"&&request.method==="GET"){const {results}=await env.DB.prepare("SELECT id,name,description,guide,player,reward,currency,status FROM quests ORDER BY id").all();return json({tasks:results})}
 if(request.method!=="POST")return json({error:"Nepodporovaná metoda"},405);
 if(Number(request.headers.get("content-length")||0)>8192)return json({error:"Příliš velký požadavek"},413);
 let body;try{body=await request.json()}catch{return json({error:"Neplatný JSON"},400)}
@@ -67,18 +68,18 @@ return json({checked_at:new Date().toISOString(),build:b?{status:b.status||null,
 
 if(url.pathname==="/api/quests/add"){
 if(!await sessionOK(env,body.token))return json({error:"Úkoly může vytvářet pouze správce."},403);
-const name=String(body.name||"").trim().slice(0,120),description=String(body.description||"").trim().slice(0,2000),player=body.player,reward=Number(body.reward??5),currency=body.currency||"emerald";
+const name=String(body.name||"").trim().slice(0,120),description=String(body.description||"").trim().slice(0,2000),guide=String(body.guide||"").slice(0,4000),player=body.player,reward=Number(body.reward??5),currency=body.currency||"emerald";
 if(!name||!["10miki10","Ala","Adas","Všichni"].includes(player)||!Number.isInteger(reward)||reward<0||reward>100000||!["diamond","emerald"].includes(currency))return json({error:"Neplatný úkol"},400);
-await env.DB.prepare("INSERT INTO quests(name,description,player,reward,currency,status) VALUES(?,?,?,?,?,'open')").bind(name,description,player,reward,currency).run();return json({ok:true});
+await env.DB.prepare("INSERT INTO quests(name,description,guide,player,reward,currency,status) VALUES(?,?,?,?,?,?,'open')").bind(name,description,guide,player,reward,currency).run();return json({ok:true});
 }
 const id=Number(body.id);
 if(!Number.isSafeInteger(id)||id<=0)return json({error:"Neplatné ID"},400);
 if(url.pathname==="/api/quests/edit"||url.pathname==="/api/quests/delete"){
 if(!await sessionOK(env,body.token))return json({error:"Úpravy smí provádět jen správce."},403);
 if(url.pathname.endsWith("delete")){const r=await env.DB.prepare("DELETE FROM quests WHERE id=?").bind(id).run();return json({ok:r.meta.changes>0},r.meta.changes?200:404)}
-const name=String(body.name||"").trim().slice(0,120),description=String(body.description||"").trim().slice(0,2000),player=body.player,reward=Number(body.reward),currency=body.currency;
+const name=String(body.name||"").trim().slice(0,120),description=String(body.description||"").trim().slice(0,2000),guide=String(body.guide||"").slice(0,4000),player=body.player,reward=Number(body.reward),currency=body.currency;
 if(!name||!["10miki10","Ala","Adas","Všichni"].includes(player)||!Number.isInteger(reward)||reward<0||reward>100000||!["diamond","emerald"].includes(currency))return json({error:"Neplatné údaje"},400);
-const r=await env.DB.prepare("UPDATE quests SET name=?,description=?,player=?,reward=?,currency=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(name,description,player,reward,currency,id).run();return json({ok:r.meta.changes>0},r.meta.changes?200:404);
+const r=await env.DB.prepare("UPDATE quests SET name=?,description=?,guide=?,player=?,reward=?,currency=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(name,description,guide,player,reward,currency,id).run();return json({ok:r.meta.changes>0},r.meta.changes?200:404);
 }
 if(url.pathname==="/api/quests/request"){
 const who=String(body.player||"");const admin=await sessionOK(env,body.token);if(!admin&&!["10miki10","Ala","Adas"].includes(who))return json({error:"Nejdřív vyber hráče."},403);
